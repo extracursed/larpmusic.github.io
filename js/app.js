@@ -55,12 +55,14 @@ function openExternal (url) {
 function shareTrack (t) {
   if (!t) return;
   const link = t.openUrl || (location.origin + location.pathname);
-  const text = 'Музыка: ' + t.title + ' — ' + t.artist + (link ? '\n' + link : '');
+  const text = 'Музыка: ' + t.title + ' — ' + t.artist;
+  // Шаринг в Telegram: открываем диалог отправки — выбираем чат с ботом @Larp_music_bot
+  const shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) +
+                   '&text=' + encodeURIComponent(text);
   haptic('impact');
-  if (TG && TG.switchInlineQuery) {
-    try { TG.switchInlineQuery(text); return; } catch (e) {}
-  }
-  if (navigator.share) { navigator.share({ title: t.title, text: text }).catch(() => {}); return; }
+  try { if (TG && TG.openTelegramLink) { TG.openTelegramLink(shareUrl); return; } } catch (e) {}
+  if (navigator.share) { navigator.share({ title: t.title, text: text + '\n' + link }).catch(() => {}); return; }
+  try { window.open(shareUrl, '_blank', 'noopener'); return; } catch (e) {}
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text)
       .then(() => toast('Скопировано — вставь в чат'))
@@ -1246,17 +1248,20 @@ function bindSettings () {
   $('#setVkToken').value = settings.vkToken;
   $('#setYaToken').value = settings.yaToken;
   $('#setYaClientId').value = settings.yaClientId;
-  $('#setProxy').value = settings.proxy;
   $('#setVolume').value = settings.volume;
   $('#setVolumeVal').textContent = settings.volume + '%';
 
   $('#setVolume').addEventListener('input', e => setVolume(+e.target.value / 100));
-  $('#setProxy').addEventListener('change', e => {
-    settings.proxy = e.target.value.trim();
-    store.set('settings', settings);
-    Sources.configure({ proxy: settings.proxy });
-    toast('Прокси сохранён');
-  });
+  // поле прокси скрыто из UI; URL прокси зашит в Sources.cfg.proxy по умолчанию
+  if ($('#setProxy')) {
+    $('#setProxy').value = settings.proxy;
+    $('#setProxy').addEventListener('change', e => {
+      settings.proxy = e.target.value.trim();
+      store.set('settings', settings);
+      Sources.configure({ proxy: settings.proxy });
+      toast('Прокси сохранён');
+    });
+  }
   $('#btnConnectSpotify').addEventListener('click', () => { goto('import'); setTimeout(() => openSpotifyImport(), 250); });
   $('#btnSaveVk').addEventListener('click', async () => {
     const t = $('#setVkToken').value.trim();
@@ -1332,18 +1337,21 @@ function openFullPlayer () {
   if (!currentTrack()) return;
   $('#fullPlayer').classList.add('open');
   $('#fullPlayer').setAttribute('aria-hidden', 'false');
+  $('#fpBackdrop').classList.add('open');
   document.body.style.overflow = 'hidden';
   if (TG && TG.BackButton) { try { TG.BackButton.show(); } catch (e) {} }
 }
 function closeFullPlayer () {
   $('#fullPlayer').classList.remove('open');
   $('#fullPlayer').setAttribute('aria-hidden', 'true');
+  $('#fpBackdrop').classList.remove('open');
   document.body.style.overflow = '';
   if (TG && TG.BackButton) { try { TG.BackButton.hide(); } catch (e) {} }
 }
 $('#miniOpen').addEventListener('click', openFullPlayer);
 $('#miniCoverBox').addEventListener('click', openFullPlayer);
 $('#fpClose').addEventListener('click', closeFullPlayer);
+$('#fpBackdrop').addEventListener('click', closeFullPlayer);
 if (TG && TG.BackButton) {
   try {
     TG.BackButton.onClick(() => {
