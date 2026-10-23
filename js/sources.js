@@ -1,7 +1,7 @@
 /* ============ LarpMusic — источники музыки ============ */
 window.Sources = (function () {
   const cfg = {
-    proxy: '/proxy',
+    proxy: 'https://larpmusic-proxy.wawerave.workers.dev',
     spotifyClientId: '',
     spotifyAccessToken: '',
     spotifyExpiresAt: 0,
