@@ -21,9 +21,16 @@ window.Sources = (function () {
     return p + (p.includes('?') ? '&' : '?') + 'url=' + encodeURIComponent(url);
   }
 
+  const REQ_TIMEOUT = 8000;
+  function fetchTo (url, opts, ms) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    return fetch(url, Object.assign({}, opts, { signal: c.signal }))
+      .finally(() => clearTimeout(t));
+  }
   async function http (url, opts = {}) {
     try {
-      const r = await fetch(url, opts);
+      const r = await fetchTo(url, opts, REQ_TIMEOUT);
       if (r.ok) return r;
       if (r.status !== 403 && r.status !== 401) throw new Error('HTTP ' + r.status);
       const txt = await r.text().catch(() => '');
@@ -33,7 +40,7 @@ window.Sources = (function () {
     } catch (e) {
       const p = proxied(url);
       if (!p) throw e;
-      const r = await fetch(p, opts);
+      const r = await fetchTo(p, opts, REQ_TIMEOUT);
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
         let msg = 'Прокси: ' + r.status + (txt ? ' ' + txt.slice(0, 160) : '');
@@ -134,6 +141,18 @@ window.Sources = (function () {
     }
   };
 
+  /* "4:05" / "1:02:03" / "253.5" -> секунды (иначе parseFloat("4:05")=4 и треки теряются) */
+  function parseLen (v) {
+    if (v == null || v === '') return 0;
+    if (typeof v === 'number') return isFinite(v) ? v : 0;
+    const s = String(v).trim();
+    if (/^\d+(\.\d+)?$/.test(s)) return Math.round(parseFloat(s));
+    const p = s.split(':').map(x => parseFloat(x) || 0);
+    if (p.length === 3) return Math.round(p[0] * 3600 + p[1] * 60 + p[2]);
+    if (p.length === 2) return Math.round(p[0] * 60 + p[1]);
+    return Math.round(parseFloat(s) || 0);
+  }
+
   /* ================= ARCHIVE.ORG (полные треки, без ключей) ================= */
   const archive = {
     mapFile (item, f) {
@@ -147,13 +166,13 @@ window.Sources = (function () {
         url: 'https://archive.org/download/' + item.identifier + '/' +
              name.split('/').map(encodeURIComponent).join('/'),
         source: 'internet',
-        duration: Math.round(parseFloat(f.length) || 0),
+        duration: parseLen(f.length),
         openUrl: 'https://archive.org/details/' + item.identifier
       };
     },
     async search (q) {
       const sUrl = 'https://archive.org/advancedsearch.php?q=' +
-        encodeURIComponent('mediatype:(audio) AND format:(MP3) AND ("' + q + '")') +
+        encodeURIComponent('mediatype:(audio) AND ("' + q + '")') +
         '&fl[]=identifier&fl[]=title&fl[]=creator&rows=12&output=json';
       let d;
       try { d = await httpJson(sUrl); } catch (e) { return []; }
@@ -164,7 +183,7 @@ window.Sources = (function () {
         try {
           const m = await httpJson('https://archive.org/metadata/' + item.identifier);
           const files = (m.files || [])
-            .filter(f => /\.mp3$/i.test(f.name || '') && parseFloat(f.length) > 30);
+            .filter(f => /\.mp3$/i.test(f.name || '') && parseLen(f.length) > 30);
           files.slice(0, 2).forEach(f => out.push(archive.mapFile(item, f)));
         } catch (e) { /* альбом пропускаем */ }
       }));
@@ -191,19 +210,18 @@ window.Sources = (function () {
     async itunes (q) {
       const url = 'https://itunes.apple.com/search?term=' + encodeURIComponent(q) +
                   '&media=music&entity=song&limit=30';
-      let data;
-      try {
-        data = await httpJson(url);
-      } catch (e) {
-        data = await internet.jsonp(url); // JSONP работает без CORS
-      }
+      const data = await internet.jsonp(url, 8000); // JSONP — мгновенно и без CORS
       return (data.results || []).map(internet.map).filter(t => t.title);
+    },
+    // гонка с таймаутом: один зависший источник не блокирует поиск
+    _race (p, ms = 8000) {
+      return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), ms))]);
     },
     async search (q) {
       const [aud, arch, prev] = await Promise.all([
-        audius.search(q).catch(() => []),
-        archive.search(q).catch(() => []),
-        internet.itunes(q).catch(() => [])
+        internet._race(audius.search(q)).catch(() => []),
+        internet._race(archive.search(q)).catch(() => []),
+        internet._race(internet.itunes(q)).catch(() => [])
       ]);
       // полные треки (Audius, Archive.org) первыми, 30-сек превью iTunes — только как дополнение
       const fullKeys = new Set(aud.concat(arch).map(t => (t.title + '|' + t.artist).toLowerCase()));
