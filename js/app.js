@@ -141,7 +141,7 @@ const settings = Object.assign({
   spotifyClientId: '', spotifyToken: '',
   vkToken: '',
   yaToken: '', yaClientId: '',
-  proxy: '/proxy',
+  proxy: 'https://larpmusic-proxy.wawerave.workers.dev',
   volume: 80
 }, store.get('settings', {}));
 
