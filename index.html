@@ -68,7 +68,7 @@
   <!-- ===== Sidebar (desktop) / bottom bar (mobile) ===== -->
   <aside class="sidebar">
     <div class="brand">
-      <b>MB</b><span>music</span>
+      <b>LB</b><span>music</span>
     </div>
     <nav class="sidenav">
       <button class="tab active" data-view="home"><svg class="ic"><use href="#i-lib"/></svg><span>Моя музыка</span></button>
@@ -89,7 +89,7 @@
   <div class="content">
 
     <header class="topbar">
-      <div class="brand-sm"><b>MB</b><span>music</span></div>
+      <div class="brand-sm"><b>LB</b><span>music</span></div>
       <button class="icon-btn round" id="btnTopSettings" aria-label="Настройки">
         <svg class="ic"><use href="#i-settings"/></svg>
       </button>
@@ -241,11 +241,6 @@
         <div class="field-card">
           <div class="field-row"><label for="setVolume">Громкость по умолчанию</label><span id="setVolumeVal">80%</span></div>
           <input id="setVolume" type="range" min="0" max="100" value="80">
-          <div class="field-row" style="margin-top:14px">
-            <label for="setProxy">API-прокси (CORS)</label>
-          </div>
-          <input id="setProxy" type="text" placeholder="/proxy">
-          <p class="note">Прокси нужен для VK/Яндекс — их API блокируют запросы прямо из браузера. Локально это <b>node server.js</b>; на GitHub Pages задеплой <b>cloudflare-worker.js</b> (инструкция внутри файла) и вставь его URL сюда.</p>
         </div>
 
         <div class="section-head"><h3>Данные</h3></div>
@@ -272,6 +267,7 @@
   </div>
 
   <!-- ===== Full screen player ===== -->
+  <div class="fp-backdrop" id="fpBackdrop" aria-hidden="true"></div>
   <div class="full-player" id="fullPlayer" aria-hidden="true">
     <div class="fp-head">
       <button class="icon-btn round" id="fpClose"><svg class="ic"><use href="#i-down"/></svg></button>
