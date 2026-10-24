@@ -127,18 +127,26 @@ window.Sources = (function () {
       }).filter(t => t.title);
     },
     async search (q) {
-      const host = await audius.ensureHost();
-      if (!host) return [];
+      // без health_check (лишний запрос): сразу ищем по хостам, берём первый живой
+      let hosts = [];
+      if (audius.host) hosts.push(audius.host);
       try {
-        return await audius.searchOnce(host, q);
-      } catch (e) {
-        // хост молчит — пробуем ещё два, потом сбрасываем кэш хоста
-        audius.host = null;
-        for (const h of audius.fallbacks.filter(x => x !== host).slice(0, 2)) {
-          try { const r = await audius.searchOnce(h, q); audius.host = h; return r; } catch (e2) { /* далее */ }
-        }
-        return [];
+        const d = await httpJson('https://api.audius.co');
+        hosts = hosts.concat((d.data || []).filter(h => /^https:\/\//.test(h)));
+      } catch (e) { /* официальный список недоступен — используем статические */ }
+      hosts = hosts.concat(audius.fallbacks);
+      const tried = new Set();
+      for (const raw of hosts) {
+        const h = String(raw).replace(/\/+$/, '');
+        if (!h || tried.has(h)) continue;
+        tried.add(h);
+        if (tried.size > 3) break;
+        try {
+          const arr = await audius.searchOnce(h, q);
+          if (arr.length) { audius.host = h; return arr; }
+        } catch (e) { /* следующий хост */ }
       }
+      return [];
     }
   };
 
@@ -180,7 +188,7 @@ window.Sources = (function () {
       const docs = (d.response && d.response.docs) || [];
       if (!docs.length) return [];
       const out = [];
-      await Promise.all(docs.slice(0, 8).map(async item => {
+      await Promise.all(docs.slice(0, 5).map(async item => {
         try {
           const m = await httpJson('https://archive.org/metadata/' + item.identifier);
           const files = (m.files || [])
@@ -219,15 +227,15 @@ window.Sources = (function () {
       return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), ms))]);
     },
     async search (q) {
-      const [aud, arch, prev] = await Promise.all([
-        internet._race(audius.search(q)).catch(() => []),
-        internet._race(archive.search(q)).catch(() => []),
-        internet._race(internet.itunes(q)).catch(() => [])
-      ]);
-      // полные треки (Audius, Archive.org) первыми, 30-сек превью iTunes — только как дополнение
-      const fullKeys = new Set(aud.concat(arch).map(t => (t.title + '|' + t.artist).toLowerCase()));
-      const previews = prev.filter(t => !fullKeys.has((t.title + '|' + t.artist).toLowerCase()));
-      return aud.concat(arch, previews);
+      // iTunes (30-сек превью) — в фоне: не тормозит выдачу и не попадает в неё при наличии полных треков
+      const prevP = internet._race(internet.itunes(q), 9000).catch(() => []);
+      const full = await Promise.all([
+        internet._race(audius.search(q), 10000).catch(() => []),
+        internet._race(archive.search(q), 10000).catch(() => [])
+      ]).then(([a, b]) => a.concat(b));
+      // полные треки (Audius, Archive.org) — всегда; 30-сек превью iTunes ТОЛЬКО если полных нет
+      if (full.length) return full;
+      return await prevP;
     },
     jsonp (url, timeout = 9000) {
       return new Promise((resolve, reject) => {
