@@ -522,7 +522,7 @@ async function runSearch (q) {
   $('#searchStatus').textContent = 'Ищу «' + q + '»…';
   $('#searchResults').innerHTML = '<div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div>';
   const which = state.searchSrc.slice();
-  if (which.includes('vk') && !Sources.vk.isConnected()) toast('VK не подключён — токен в настройках', true);
+  if (which.includes('vk') && !Sources.vk.canSearch()) toast('VK-поиск недоступен — нет токена', true);
   if (which.includes('spotify') && !Sources.spotify.isConnected()) toast('Spotify не подключён — вкладка «Ещё»', true);
   if (which.includes('yandex') && !Sources.yandex.isConnected()) toast('Яндекс не подключён — вкладка «Ещё»', true);
   try {
