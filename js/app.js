@@ -180,8 +180,17 @@ function toggleFav (t) {
   else { regTracks([t]); pl.trackIds.push(t.id); if (!pl.cover && t.cover) pl.cover = t.cover; toast('Добавлено в «Мне нравится»'); haptic('success'); }
   store.set('playlists', state.playlists);
   $$('[data-fav="' + CSS.escape(t.id) + '"]').forEach(b => b.classList.toggle('on', isFav(t.id)));
+  syncFavUI(t);
   renderFav();
   renderHome();
+}
+// сердечко в полном плеере (синится с избранным текущего трека)
+function syncFavUI (t) {
+  const fp = $('#fpFav');
+  if (!fp) return;
+  const cur = currentTrack();
+  if (t && cur && cur.id === t.id) fp.classList.toggle('on', isFav(t.id));
+  else if (!t) fp.classList.toggle('on', !!(cur && isFav(cur.id)));
 }
 
 const settings = Object.assign({
@@ -397,6 +406,7 @@ function updatePlayerUI () {
   tag.textContent = SRC_LABEL[t.source] || t.source;
   tag.className = 'src-tag s-' + t.source;
   tag.hidden = false;
+  syncFavUI(t);
   $$('.track').forEach(el => el.classList.toggle('playing', el.dataset.id === t.id));
   renderQueue();
 }
@@ -704,8 +714,44 @@ document.addEventListener('click', e => {
   else if (container && container.id === 'recoList') list = state.recoCache || [];
   else if (row.closest('#favList')) list = state.favCache || favTracks();
   if (!list.length) list = [t];
+  // повторный клик по уже играющей песне — открываем её меню (а не перезапускаем)
+  const cur = currentTrack();
+  if (cur && cur.id === t.id) { openTrackMenu(t, list); return; }
   playTrack(t, list);
 });
+
+/* кнопки действий в полном плеере */
+$('#fpFav').addEventListener('click', () => toggleFav(currentTrack()));
+$('#fpShare').addEventListener('click', () => shareTrack(currentTrack()));
+$('#fpAdd').addEventListener('click', () => openAddToPlaylist(currentTrack()));
+
+/* меню песни (второй клик по играющей строке) */
+function openTrackMenu (t, list) {
+  if (!t) return;
+  const fav = isFav(t.id);
+  openModal(
+    '<div class="tm-head">' +
+      '<img alt="" src="' + esc(t.cover || phCover(t.title + t.artist)) + '">' +
+      '<div><h3>' + esc(t.title) + '</h3><p>' + esc(t.artist) + '</p></div>' +
+    '</div>' +
+    '<div class="tm-list">' +
+      '<button class="tm-item" data-tm="replay"><svg class="ic"><use href="#i-play"/></svg> Играть сначала</button>' +
+      '<button class="tm-item' + (fav ? ' on' : '') + '" data-tm="fav"><svg class="ic"><use href="#i-heart"/></svg> ' +
+        (fav ? 'Убрать из «Мне нравится»' : 'В избранное') + '</button>' +
+      '<button class="tm-item" data-tm="share"><svg class="ic"><use href="#i-share"/></svg> Отправить mp3-файлом</button>' +
+      '<button class="tm-item" data-tm="add"><svg class="ic"><use href="#i-plus"/></svg> В плейлист</button>' +
+      (t.openUrl ? '<button class="tm-item" data-tm="ext"><svg class="ic"><use href="#i-ext"/></svg> Открыть в источнике</button>' : '') +
+    '</div>'
+  );
+  $$('#modalBody [data-tm]').forEach(b => b.addEventListener('click', () => {
+    const a = b.dataset.tm;
+    if (a === 'replay') { closeModal(); playTrack(t, list && list.length ? list : [t]); }
+    else if (a === 'fav') { toggleFav(t); closeModal(); }
+    else if (a === 'share') { closeModal(); shareTrack(t); }
+    else if (a === 'add') { openAddToPlaylist(t); }   // модалка перекроется выбором плейлиста
+    else if (a === 'ext') { closeModal(); openExternal(t.openUrl); }
+  }));
+}
 
 function openAddToPlaylist (t) {
   if (!t) return;
