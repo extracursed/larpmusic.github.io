@@ -54,7 +54,10 @@ function openExternal (url) {
 }
 function shareTrack (t) {
   if (!t) return;
-  const link = t.openUrl || (location.origin + location.pathname);
+  // Шарим ПРЯМУЮ ссылку на аудио — бот @Larp_music_bot превратит её в аудиофайл.
+  // Если прямой ссылки нет (локальный файл/VK) — шарим страницу трека, как раньше.
+  const direct = /^https?:\/\//i.test(t.url || '') ? t.url : '';
+  const link = direct || t.openUrl || (location.origin + location.pathname);
   const text = 'Музыка: ' + t.title + ' — ' + t.artist;
   // Шаринг в Telegram: открываем диалог отправки — выбираем чат с ботом @Larp_music_bot
   const shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) +
