@@ -6,8 +6,9 @@
 <meta name="theme-color" content="#0b0b0c">
 <title>LarpMusic — ЛарпМузыка</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="css/style-classic.css?v=6" id="cssClassic" disabled>
-<link rel="stylesheet" href="css/style.css?v=6" id="cssMain">
+<link rel="stylesheet" href="css/style-classic.css?v=7" id="cssClassic" disabled>
+<link rel="stylesheet" href="css/style-v3.css?v=7" id="cssV3" disabled>
+<link rel="stylesheet" href="css/style.css?v=7" id="cssMain">
 </head>
 <body>
 
@@ -250,27 +251,10 @@
           <div class="field-row"><label>Дизайн</label><span class="tag" id="stDesign">новый</span></div>
           <div class="field-row">
             <button class="btn ghost" id="btnDesignNew" style="flex:1">Новый</button>
+            <button class="btn ghost" id="btnDesignPrev" style="flex:1">Прошлый</button>
             <button class="btn ghost" id="btnDesignClassic" style="flex:1">Классический</button>
-            <button class="btn ghost" id="btnDesignCustom" style="flex:1">Кастом</button>
           </div>
-          <p class="note">«Классический» — прежний вид приложения. «Кастом» — свои цвета.</p>
-          <div id="customThemePanel" hidden>
-            <div class="field-row" style="margin-top:12px"><label>Цвет акцента</label></div>
-            <div class="palette-sw" id="swAcc"></div>
-            <div class="field-row" style="margin-top:12px">
-              <label>Свой акцент</label>
-              <input type="color" id="colAcc" value="#ff3b5c">
-            </div>
-            <div class="field-row" style="margin-top:12px">
-              <label>Панель слева (меню)</label>
-              <input type="color" id="colPanel" value="#101013">
-            </div>
-            <div class="field-row" style="margin-top:4px">
-              <label>Панель справа (контент)</label>
-              <input type="color" id="colBg" value="#0d0d0f">
-            </div>
-            <p class="note">Акцент красит вкладки, кнопки и игрока; панели — фон слева и справа. Всё сохраняется на этом устройстве.</p>
-          </div>
+          <p class="note">«Прошлый» и «Классический» — резервные копии прежних видов приложения.</p>
         </div>
 
         <div class="section-head"><h3>Перенос музыки</h3></div>
@@ -387,7 +371,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
-<script src="js/sources.js?v=6"></script>
-<script src="js/app.js?v=6"></script>
+<script src="js/sources.js?v=7"></script>
+<script src="js/app.js?v=7"></script>
 </body>
 </html>

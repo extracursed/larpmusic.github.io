@@ -580,8 +580,8 @@ function renderRecent () {
 function renderImportCards () {
   const cards = [
     { k: 'm3u', c: '#22c55e', icon: '#i-globe', t: 'M3U / прямые ссылки', s: 'Вставь ссылку или содержимое .m3u — треки заиграют сразу.', b: 'интернет' },
-    { k: 'soundcloud', c: '#ff7700', icon: '#i-globe', t: 'SoundCloud', s: 'Ссылка на трек или плейлист — импорт без токена, треки полные.', b: 'без токена', always: true },
     { k: 'files', c: '#a78bfa', icon: '#i-folder', t: 'Файлы с устройства', s: 'MP3, M4A, WAV, FLAC — локально, без загрузки в сеть.', b: 'локально' },
+    { k: 'soundcloud', c: '#ff7700', icon: '#i-globe', t: 'SoundCloud', s: 'Ссылка на трек или плейлист — импорт без токена, треки полные.', b: 'без токена', always: true },
     { k: 'spotify', brand: true, icon: '#i-spotify', t: 'Spotify', s: 'Ссылка на плейлист или альбом — публичные импортируются без токена.', b: 'без токена', always: true },
     { k: 'vk', brand: true, icon: '#i-vk', t: 'VK Музыка', s: 'Ссылка на плейлист или профиль. Нужен токен VK (по-другому VK не отдаёт).', b: 'токен' },
     { k: 'yandex', brand: true, icon: '#i-yandex', t: 'Яндекс Музыка', s: 'Публичные плейлисты — без токена (нужен российский IP).', b: 'без токена', always: true }
@@ -1447,74 +1447,39 @@ async function yaFindByLink () {
 }
 
 /* ============ НАСТРОЙКИ ============ */
-/* --- переключатель дизайна: новый / классический (бэкап) / кастом (свои цвета) --- */
-const ACCENT_PRESETS = ['#ff3b5c', '#ff7a1a', '#ffd60a', '#38d95c', '#22b8cf', '#4f7cff', '#9a5cff', '#f45fc0'];
-function loadCustomTheme () {
-  try { return JSON.parse(localStorage.getItem('mma:customTheme')) || {}; } catch (e) { return {}; }
-}
-function applyCustomVars (t) {
-  const root = document.documentElement.style;
-  ['--acc', '--panel', '--bg'].forEach(k => root.removeProperty(k));
-  if (t.acc) root.setProperty('--acc', t.acc);
-  if (t.panel) root.setProperty('--panel', t.panel);
-  if (t.bg) root.setProperty('--bg', t.bg);
-}
+/* --- переключатель дизайна: новый / прошый (v3) / классический (GB оригинал) --- */
 function applyDesign (which) {
   const classic = which === 'classic';
-  const custom = which === 'custom';
-  const c = $('#cssClassic'), m = $('#cssMain');
-  if (c && m) { c.disabled = !classic && !custom; m.disabled = classic; }
-  applyCustomVars(custom ? loadCustomTheme() : {});
+  const prev = which === 'prev';
+  const c = $('#cssClassic'), v3 = $('#cssV3'), m = $('#cssMain');
+  if (c && v3 && m) {
+    c.disabled = !classic;
+    v3.disabled = !prev;
+    m.disabled = classic || prev;
+  }
   localStorage.setItem('mma:design', which);
   const st = $('#stDesign');
   if (st) {
-    st.textContent = classic ? 'классический' : (custom ? 'кастом' : 'новый');
-    st.classList.toggle('ok', custom);
+    st.textContent = classic ? 'классический' : (prev ? 'прошлый' : 'новый');
+    st.classList.remove('ok');
   }
-  const panel = $('#customThemePanel');
-  if (panel) panel.hidden = !custom;
 }
 function bindDesignSwitch () {
   if (!$('#btnDesignNew')) return;
   applyDesign(localStorage.getItem('mma:design') || 'new');
   $('#btnDesignNew').addEventListener('click', () => { applyDesign('new'); haptic('impact'); });
+  if ($('#btnDesignPrev')) $('#btnDesignPrev').addEventListener('click', () => { applyDesign('prev'); haptic('impact'); });
   $('#btnDesignClassic').addEventListener('click', () => { applyDesign('classic'); haptic('impact'); });
-  const btnCustom = $('#btnDesignCustom');
-  if (!btnCustom) return;
-  btnCustom.addEventListener('click', () => { applyDesign('custom'); haptic('impact'); });
-
-  // палитра акцента
-  const sw = $('#swAcc');
-  if (sw) {
-    sw.innerHTML = ACCENT_PRESETS.map(c =>
-      '<button class="swatch" data-c="' + c + '" style="background:' + c + '"></button>').join('');
-    const markSel = c => $$('#swAcc .swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c));
-    sw.addEventListener('click', e => {
-      const b = e.target.closest('.swatch');
-      if (!b) return;
-      const t = loadCustomTheme(); t.acc = b.dataset.c;
-      localStorage.setItem('mma:customTheme', JSON.stringify(t));
-      applyDesign('custom');
-      if ($('#colAcc')) $('#colAcc').value = b.dataset.c;
-      markSel(b.dataset.c);
-      haptic('impact');
-    });
-    const saved = loadCustomTheme();
-    markSel(saved.acc || ACCENT_PRESETS[0]);
-  }
-  // ручные цвета: акцент / панель слева / контент
-  [['#colAcc', 'acc'], ['#colPanel', 'panel'], ['#colBg', 'bg']].forEach(([sel, key]) => {
-    const el = $(sel);
-    if (!el) return;
-    const saved = loadCustomTheme();
-    if (saved[key]) el.value = saved[key];
-    el.addEventListener('input', () => {
-      const t = loadCustomTheme(); t[key] = el.value;
-      localStorage.setItem('mma:customTheme', JSON.stringify(t));
-      applyDesign('custom');
-    });
-  });
 }
+
+/* --- ползунки в стиле GB: белая заливка до курсора + белый круглый набалдашник --- */
+function paintRange (el) {
+  if (!el || el.type !== 'range') return;
+  const min = parseFloat(el.min) || 0, max = parseFloat(el.max) || 100;
+  const v = max > min ? ((parseFloat(el.value) || 0) - min) / (max - min) * 100 : 0;
+  el.style.background = 'linear-gradient(90deg,#fff ' + v + '%,#2a2a30 ' + v + '%)';
+}
+document.addEventListener('input', e => { if (e.target.matches && e.target.matches('input[type=range]')) paintRange(e.target); });
 
 /* --- перенос музыки между устройствами: экспорт/импорт кода --- */
 function exportMusicCode () {
