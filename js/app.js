@@ -54,7 +54,50 @@ function openExternal (url) {
 }
 function shareTrack (t) {
   if (!t) return;
-  // Шарим ПРЯМУЮ ссылку на аудио — бот @Larp_music_bot превратит её в аудиофайл.
+  haptic('impact');
+  // Сперва шарим ПРЯМЫМ ФАЙЛОМ mp3 (не ссылкой) — Telegram сохранит его как аудиофайл.
+  // Если файлом не вышло (нет CORS/вьюка не умеет) — фолбэк на ссылку, её конвертирует бот.
+  shareAsFile(t).catch(e => {
+    if (e && e.name === 'AbortError') return;   // юзер сам отменил шаринг
+    shareAsLink(t);                              // иначе — фолбэк на ссылку
+  });
+}
+function shareName (t, ext) {
+  const clean = s => String(s || '').replace(/[\\/:*?"<>|]+/g, '_').trim();
+  return ((clean(t.artist) + ' - ' + clean(t.title)).replace(/^[-_.\s]+/, '') || 'track').slice(0, 90) + ext;
+}
+function shareExt (type, url) {
+  if (/mp3|mpeg/i.test(type || '')) return '.mp3';
+  if (/mp4|m4a|aac/i.test(type || '')) return '.m4a';
+  if (/flac/i.test(type || '')) return '.flac';
+  if (/wav/i.test(type || '')) return '.wav';
+  const m = /\.(mp3|m4a|wav|flac)(\?|$)/i.exec(url || '');
+  return m ? '.' + m[1].toLowerCase() : '.mp3';
+}
+async function shareAsFile (t) {
+  const okAudio = b => b && b.size >= 8000 && !/text\/html|json/i.test(b.type || '');
+  const grab = async u => {
+    const r = await fetch(u).catch(() => null);
+    return (r && r.ok) ? await r.blob().catch(() => null) : null;
+  };
+  let blob = null;
+  if (t.source === 'local') blob = await idbGet(t.id);
+  else if (/^https?:\/\//i.test(t.url || '')) {
+    blob = await grab(t.url);                                        // 1) напрямую (CDN с открытым CORS)
+    if (!okAudio(blob)) blob = await grab(settings.proxy + '?url=' + encodeURIComponent(t.url)); // 2) через свой прокси
+  }
+  if (!okAudio(blob)) throw new Error('no file');
+  const file = new File([blob], shareName(t, shareExt(blob.type, t.url)), { type: blob.type || 'audio/mpeg' });
+  if (!(navigator.share && navigator.canShare && navigator.canShare({ files: [file] }))) throw new Error('no fileshare');
+  try {
+    await navigator.share({ files: [file], title: t.title });
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw e;   // юзер сам закрыл — ничего не шарим
+    throw e;
+  }
+}
+function shareAsLink (t) {
+  // Шарим прямую ссылку — бот @Larp_music_bot превратит её в аудиофайл.
   // Если прямой ссылки нет (локальный файл/VK) — шарим страницу трека, как раньше.
   const direct = /^https?:\/\//i.test(t.url || '') ? t.url : '';
   const link = direct || t.openUrl || (location.origin + location.pathname);
@@ -62,7 +105,6 @@ function shareTrack (t) {
   // Шаринг в Telegram: открываем диалог отправки — выбираем чат с ботом @Larp_music_bot
   const shareUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) +
                    '&text=' + encodeURIComponent(text);
-  haptic('impact');
   try { if (TG && TG.openTelegramLink) { TG.openTelegramLink(shareUrl); return; } } catch (e) {}
   if (navigator.share) { navigator.share({ title: t.title, text: text + '\n' + link }).catch(() => {}); return; }
   try { window.open(shareUrl, '_blank', 'noopener'); return; } catch (e) {}
@@ -146,7 +188,7 @@ const settings = Object.assign({
   spotifyClientId: '', spotifyToken: '',
   vkToken: '',
   yaToken: '', yaClientId: '',
-  proxy: 'https://larpmusic-proxy.wawerave.workers.dev',
+  proxy: 'https://www.extravisualdlc.online/api/proxy',
   volume: 80
 }, store.get('settings', {}));
 
@@ -870,8 +912,15 @@ function openFilesImport () {
       });
     }
     regTracks(tracks);
-    const id = createPlaylist('Мои файлы', '');
-    state.playlists.find(p => p.id === id).trackIds = tracks.map(t => t.id);
+    // Все импорты кладём в ОДНУ папку «Мои файлы» (не создаём дубликаты)
+    let pl = state.playlists.find(p => p.name === 'Мои файлы');
+    if (!pl) { createPlaylist('Мои файлы', ''); pl = state.playlists.find(p => p.name === 'Мои файлы'); }
+    // схлопываем старые дубликаты папки в одну (треки не теряем)
+    state.playlists.filter(p => p.name === 'Мои файлы' && p.id !== pl.id).forEach(dup => {
+      dup.trackIds.forEach(tid => { if (!pl.trackIds.includes(tid)) pl.trackIds.push(tid); });
+      state.playlists.splice(state.playlists.indexOf(dup), 1);
+    });
+    tracks.forEach(t => { if (!pl.trackIds.includes(t.id)) pl.trackIds.push(t.id); });
     store.set('playlists', state.playlists);
     renderHome();
     closeModal();
