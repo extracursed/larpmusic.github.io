@@ -200,7 +200,130 @@ window.Sources = (function () {
     }
   };
 
-  /* ================= ИНТЕРНЕТ (Audius + Archive.org + iTunes) ================= */
+  /* ================= YOUTUBE через Piped (полные треки, без ключей) ================= */
+  /* Публичные инстансы Piped API. Ищем на YouTube и берём прямой аудио-поток —
+     тот же приём, что у GB Music и Dotify: полный трек, а не 30-сек превью. */
+  const piped = {
+    host: null,
+    hosts: [
+      'https://pipedapi.kavin.rocks',
+      'https://pipedapi.adminforge.de',
+      'https://api.piped.private.coffee',
+      'https://pipedapi.reallyaweso.me',
+      'https://pipedapi.drgns.space',
+      'https://pipedapi.ducks.party'
+    ],
+    // запрос к инстансу: перебираем живые хосты, кэшируем рабочий
+    async api (path) {
+      const hosts = (piped.host ? [piped.host] : []).concat(piped.hosts);
+      const tried = new Set();
+      for (const raw of hosts) {
+        const h = String(raw).replace(/\/+$/, '');
+        if (!h || tried.has(h)) continue;
+        tried.add(h);
+        if (tried.size > 3) break;
+        try {
+          const d = await httpJson(h + path);
+          if (d && (d.items || d.audioStreams)) { piped.host = h; return d; }
+        } catch (e) { /* следующий инстанс */ }
+      }
+      return null;
+    },
+    // прямой аудио-поток по videoId
+    async stream (id) {
+      const s = await piped.api('/streams/' + encodeURIComponent(id));
+      if (!s || !Array.isArray(s.audioStreams) || !s.audioStreams.length) return null;
+      const audio = s.audioStreams
+        .filter(a => a && a.url && !a.videoOnly)
+        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+      if (!audio) return null;
+      return { title: s.title, artist: s.uploader, duration: s.duration, thumb: s.thumbnailUrl, audio };
+    },
+    async search (q) {
+      const d = await piped.api('/search?q=' + encodeURIComponent(q) + '&filter=videos');
+      const items = (d && d.items) ? d.items : [];
+      const vids = items.filter(it => it && it.url && /v=([\w-]{6,})/.test(it.url)).slice(0, 6);
+      const out = await Promise.all(vids.map(async it => {
+        const id = it.url.match(/v=([\w-]{6,})/)[1];
+        try {
+          const st = await piped.stream(id);
+          if (!st || !st.audio || !st.audio.url) return null;
+          return {
+            id: 'yt:' + id,
+            title: st.title || it.title || 'Трек',
+            artist: st.artist || it.uploaderName || 'YouTube',
+            album: '',
+            cover: st.thumb || it.thumbnail || '',
+            url: st.audio.url,
+            source: 'Интернет',
+            duration: Math.round(st.duration || it.duration || 0),
+            openUrl: 'https://www.youtube.com/watch?v=' + id
+          };
+        } catch (e) { return null; }
+      }));
+      return out.filter(Boolean);
+    }
+  };
+
+  /* ================= SOUNDCLOUD (полные треки, без ключей) ================= */
+  /* client_id вытаскиваем из их фронтенд-бандла (как yt-dlp). Если не вышло —
+     источник вернёт пусто и не помешает остальным. */
+  const soundcloud = {
+    clientId: null,
+    async getId () {
+      if (soundcloud.clientId) return soundcloud.clientId;
+      const html = await (await httpGet('https://soundcloud.com')).text();
+      const m = html.match(/https?:\/\/a-v2\.sndcdn\.com\/assets\/[\w.]+\.js/g) || [];
+      for (const js of m.slice(-4).reverse()) {
+        try {
+          const body = await (await httpGet(js)).text();
+          const c = body.match(/client_id["']?\s*:\s*["']([a-zA-Z0-9]{20,40})["']/);
+          if (c) { soundcloud.clientId = c[1]; return c[1]; }
+        } catch (e) { /* следующий бандл */ }
+      }
+      return null;
+    },
+    async api (path) {
+      const id = await soundcloud.getId();
+      if (!id) return null;
+      return httpJson('https://api-v2.soundcloud.com' + path + (path.includes('?') ? '&' : '?') + 'client_id=' + id);
+    },
+    // прямая mp3-ссылка по треку SoundCloud
+    async progressive (t) {
+      const id = await soundcloud.getId();
+      if (!id) return null;
+      const trs = (t.media && t.media.transcodings) || [];
+      const prog = trs.find(x => x.protocol === 'http' && x.format && x.format.mime_type === 'audio/mpeg') ||
+                   trs.find(x => x.format && x.format.mime_type === 'audio/mpeg');
+      if (!prog) return null;
+      const d = await httpJson(prog.url + (prog.url.includes('?') ? '&' : '?') + 'client_id=' + id);
+      return (d && d.url) || null;
+    },
+    async search (q) {
+      const d = await soundcloud.api('/search/tracks?q=' + encodeURIComponent(q) + '&limit=12&offset=0');
+      const col = (d && d.collection) ? d.collection : [];
+      const out = await Promise.all(col.slice(0, 6).map(async t => {
+        try {
+          const url = await soundcloud.progressive(t);
+          if (!url) return null;
+          return {
+            id: 'sc:' + t.id,
+            title: String(t.title || '').replace(/\s+/g, ' ').trim() || 'Трек',
+            artist: (t.user && t.user.username) || 'SoundCloud',
+            album: '',
+            cover: t.artwork_url || (t.user && t.user.avatar_url) || '',
+            url: url,
+            source: 'Интернет',
+            duration: Math.round((t.duration || 0) / 1000),
+            openUrl: t.permalink_url ? 'https://soundcloud.com' + t.permalink_url : ''
+          };
+        } catch (e) { return null; }
+      }));
+      return out.filter(Boolean);
+    }
+  };
+
+  /* ================= ИНТЕРНЕТ (YouTube + SoundCloud + Audius + Archive.org + iTunes) ================= */
   const internet = {
     map (t) {
       const cover = (t.artworkUrl100 || '').replace('100x100bb', '600x600bb');
@@ -227,13 +350,16 @@ window.Sources = (function () {
       return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('slow')), ms))]);
     },
     async search (q) {
-      // iTunes (30-сек превью) — в фоне: не тормозит выдачу и не попадает в неё при наличии полных треков
+      // iTunes (30-сек превью) — в фоне: не тормозит выдачу, ТОЛЬКО если полных треков нет
       const prevP = internet._race(internet.itunes(q), 9000).catch(() => []);
+      // полные треки: YouTube (Piped) первым — как у GB Music, дальше SoundCloud, Audius, Archive
       const full = await Promise.all([
+        internet._race(piped.search(q), 13000).catch(() => []),
+        internet._race(soundcloud.search(q), 11000).catch(() => []),
         internet._race(audius.search(q), 10000).catch(() => []),
         internet._race(archive.search(q), 10000).catch(() => [])
-      ]).then(([a, b]) => a.concat(b));
-      // полные треки (Audius, Archive.org) — всегда; 30-сек превью iTunes ТОЛЬКО если полных нет
+      ]).then(r => r.reduce((acc, a) => acc.concat(a), []));
+      // полные треки — всегда; 30-сек превью iTunes ТОЛЬКО если полных нет
       if (full.length) return full;
       return await prevP;
     },
