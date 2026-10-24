@@ -813,6 +813,9 @@ window.Sources = (function () {
       if (m) return { type: 'album', id: m[1], label: 'Альбом' };
       m = path.match(/^\/track\/(\d+)$/);
       if (m) return { type: 'track', id: m[1], label: 'Трек' };
+      // новый формат шаринга: /playlists/{uuid} (редакторские и публичные плейлисты)
+      m = path.match(/^\/playlists\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      if (m) return { type: 'uuid', uuid: m[1], label: 'Плейлист' };
       m = path.match(/^\/playlists\/(\d+)$/);
       if (m) return { type: 'myplaylist', kind: m[1], label: 'Плейлист' };
       return null;
@@ -839,6 +842,14 @@ window.Sources = (function () {
       return d.result ? [yandex.mapTrack(d.result)] : [];
     },
     async findByLink (p) {
+      // uuid-ссылки нового формата: /playlists/{uuid} — отдаются анонимно, треки инлайн
+      if (p.type === 'uuid') {
+        const d = await yandex.api('/playlist/' + p.uuid);
+        const pl = d.result || {};
+        const tracks = (pl.tracks || []).map(x => yandex.mapTrack(x.track ? x : x)).filter(x => x.title);
+        if (!tracks.length) throw new Error('Плейлист пуст или недоступен');
+        return { name: pl.title || 'Плейлист', cover: yandex.cover(pl.coverUri || pl.ogImage), tracks };
+      }
       if (p.type === 'playlist') {
         const lists = await yandex.albumsOf(p.user);
         const meta = lists.find(x => String(x.kind) === String(p.kind));
@@ -913,6 +924,7 @@ window.Sources = (function () {
     const tasks = [];
     const names = [];
     if (which.includes('internet')) { names.push('internet'); tasks.push(internet.search(q).catch(() => [])); }
+    if (which.includes('soundcloud')) { names.push('soundcloud'); tasks.push(soundcloud.search(q).catch(() => [])); }
     if (which.includes('vk') && vk.canSearch()) { names.push('vk'); tasks.push(vk.search(q).catch(() => [])); }
     if (which.includes('spotify') && spotify.isConnected()) { names.push('spotify'); tasks.push(spotify.search(q).catch(() => [])); }
     if (which.includes('yandex') && yandex.isConnected()) { names.push('yandex'); tasks.push(yandex.search(q).catch(() => [])); }

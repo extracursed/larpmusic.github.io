@@ -239,7 +239,7 @@ const state = {
   volume: settings.volume / 100,
   trends: [],
   activePlaylist: null,
-  searchSrc: ['internet']
+  searchSrc: ['internet', 'soundcloud']
 };
 
 /* ---------- реестр треков (переживает перезагрузку) ---------- */
@@ -593,7 +593,7 @@ function renderImportCards () {
   };
   $('#importCards').innerHTML = cards.map(c => {
     const logo = c.brand
-      ? '<div class="imp-logo brand"><svg class="ic"><use href="' + c.icon + '"/></svg></div>'
+      ? '<div class="imp-logo imp-brand"><svg class="ic"><use href="' + c.icon + '"/></svg></div>'
       : '<div class="imp-logo" style="background:' + c.c + '"><svg class="ic"><use href="' + c.icon + '"/></svg></div>';
     const badge = c.always
       ? '<span class="imp-badge ok">' + c.b + '</span>'
@@ -1447,20 +1447,73 @@ async function yaFindByLink () {
 }
 
 /* ============ НАСТРОЙКИ ============ */
-/* --- переключатель дизайна: новый / классический (бэкап старого) --- */
+/* --- переключатель дизайна: новый / классический (бэкап) / кастом (свои цвета) --- */
+const ACCENT_PRESETS = ['#ff3b5c', '#ff7a1a', '#ffd60a', '#38d95c', '#22b8cf', '#4f7cff', '#9a5cff', '#f45fc0'];
+function loadCustomTheme () {
+  try { return JSON.parse(localStorage.getItem('mma:customTheme')) || {}; } catch (e) { return {}; }
+}
+function applyCustomVars (t) {
+  const root = document.documentElement.style;
+  ['--acc', '--panel', '--bg'].forEach(k => root.removeProperty(k));
+  if (t.acc) root.setProperty('--acc', t.acc);
+  if (t.panel) root.setProperty('--panel', t.panel);
+  if (t.bg) root.setProperty('--bg', t.bg);
+}
 function applyDesign (which) {
   const classic = which === 'classic';
+  const custom = which === 'custom';
   const c = $('#cssClassic'), m = $('#cssMain');
-  if (c && m) { c.disabled = !classic; m.disabled = classic; }
-  localStorage.setItem('mma:design', classic ? 'classic' : 'new');
+  if (c && m) { c.disabled = !classic && !custom; m.disabled = classic; }
+  applyCustomVars(custom ? loadCustomTheme() : {});
+  localStorage.setItem('mma:design', which);
   const st = $('#stDesign');
-  if (st) { st.textContent = classic ? 'классический' : 'новый'; st.classList.toggle('ok', !classic); }
+  if (st) {
+    st.textContent = classic ? 'классический' : (custom ? 'кастом' : 'новый');
+    st.classList.toggle('ok', custom);
+  }
+  const panel = $('#customThemePanel');
+  if (panel) panel.hidden = !custom;
 }
 function bindDesignSwitch () {
   if (!$('#btnDesignNew')) return;
-  applyDesign(localStorage.getItem('mma:design') === 'classic' ? 'classic' : 'new');
+  applyDesign(localStorage.getItem('mma:design') || 'new');
   $('#btnDesignNew').addEventListener('click', () => { applyDesign('new'); haptic('impact'); });
   $('#btnDesignClassic').addEventListener('click', () => { applyDesign('classic'); haptic('impact'); });
+  const btnCustom = $('#btnDesignCustom');
+  if (!btnCustom) return;
+  btnCustom.addEventListener('click', () => { applyDesign('custom'); haptic('impact'); });
+
+  // палитра акцента
+  const sw = $('#swAcc');
+  if (sw) {
+    sw.innerHTML = ACCENT_PRESETS.map(c =>
+      '<button class="swatch" data-c="' + c + '" style="background:' + c + '"></button>').join('');
+    const markSel = c => $$('#swAcc .swatch').forEach(s => s.classList.toggle('sel', s.dataset.c === c));
+    sw.addEventListener('click', e => {
+      const b = e.target.closest('.swatch');
+      if (!b) return;
+      const t = loadCustomTheme(); t.acc = b.dataset.c;
+      localStorage.setItem('mma:customTheme', JSON.stringify(t));
+      applyDesign('custom');
+      if ($('#colAcc')) $('#colAcc').value = b.dataset.c;
+      markSel(b.dataset.c);
+      haptic('impact');
+    });
+    const saved = loadCustomTheme();
+    markSel(saved.acc || ACCENT_PRESETS[0]);
+  }
+  // ручные цвета: акцент / панель слева / контент
+  [['#colAcc', 'acc'], ['#colPanel', 'panel'], ['#colBg', 'bg']].forEach(([sel, key]) => {
+    const el = $(sel);
+    if (!el) return;
+    const saved = loadCustomTheme();
+    if (saved[key]) el.value = saved[key];
+    el.addEventListener('input', () => {
+      const t = loadCustomTheme(); t[key] = el.value;
+      localStorage.setItem('mma:customTheme', JSON.stringify(t));
+      applyDesign('custom');
+    });
+  });
 }
 
 /* --- перенос музыки между устройствами: экспорт/импорт кода --- */
