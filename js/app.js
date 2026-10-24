@@ -263,6 +263,34 @@ async function resolveLocalTracks () {
 /* ============ ПЛЕЕР ============ */
 const audio = $('#audio');
 
+/* ---- HLS (SoundCloud отдаёт полные треки как HLS/m3u8) ----
+   hls.js кормит сегменты в <audio> через MSE; на iOS (WKWebView, где MSE нет)
+   m3u8 играет сам <audio> — просто ставим src. */
+let hls = null;
+function destroyHls () {
+  if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
+}
+function loadAudio (t) {
+  const needHls = !!(t && t.hls && /\.m3u8|mpegurl/i.test(t.url));
+  destroyHls();
+  if (needHls && window.Hls && Hls.isSupported()) {
+    audio.removeAttribute('src');
+    try { audio.load(); } catch (e) {}   // сброс предыдущего источника
+    hls = new Hls({ enableWorker: true });
+    hls.attachMedia(audio);
+    hls.loadSource(t.url);
+    hls.on(Hls.Events.ERROR, (ev, data) => {
+      if (data && data.fatal) {
+        destroyHls();
+        toast('Поток недоступен — пропускаю', true);
+        nextTrack(true);
+      }
+    });
+  } else {
+    audio.src = t.url;   // mp3 как раньше; iOS и сам играет m3u8
+  }
+}
+
 function fmt (s) {
   if (!isFinite(s) || s < 0) s = 0;
   const m = Math.floor(s / 60), ss = Math.floor(s % 60);
@@ -286,7 +314,7 @@ function playIndex (i, autoplay) {
     nextTrack(true);
     return;
   }
-  audio.src = t.url;
+  loadAudio(t);
   if (autoplay !== false) audio.play().catch(() => {});
   pushRecent(t.id);
   updatePlayerUI();
@@ -300,7 +328,7 @@ function playTrack (t, trackList) {
   haptic('impact');
 }
 function togglePlay () {
-  if (!audio.src) {
+  if (!audio.src && !hls) {
     const ids = state.recent.filter(id => reg(id));
     if (ids.length) playIndex(0, true);
     else toast('Сначала выбери трек');
@@ -900,7 +928,7 @@ function openM3uImport () {
   openModal(
     '<h3>Импорт из интернета (M3U)</h3>' +
     '<p class="sub">Вставь ссылку на .m3u/.m3u8 плейлист <b>или</b> его содержимое (строки #EXTINF + ссылки на mp3).</p>' +
-    '<textarea class="mono" id="m3uText" placeholder="https://example.com/playlist.m3u&#10;&#10;или&#10;&#10;#EXTINF:180,Исполнитель - Трек&#10;https://example.com/song.mp3"></textarea>' +
+    '<textarea class="mono" id="m3uText" placeholder="https ://example.com/playlist.m3u&#10;&#10;или&#10;&#10;#EXTINF:180,Исполнитель - Трек&#10;https://example.com/song.mp3"></textarea>' +
     '<div class="modal-actions">' +
       '<button class="btn primary" id="m3uUrl">По ссылке</button>' +
       '<button class="btn ghost" id="m3uRaw">Из текста</button>' +
