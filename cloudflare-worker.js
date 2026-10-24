@@ -18,7 +18,12 @@ const ALLOW = [
   'api.audius.co', 'discoveryprovider.audius.co',
   'discoveryprovider2.audius.co', 'discoveryprovider3.audius.co', 'discoveryprovider4.audius.co',
   'api.spotify.com', 'accounts.spotify.com',
-  'archive.org'
+  'archive.org',
+  // YouTube через публичные инстансы Piped (полные треки — как у GB Music/Dotify)
+  'pipedapi.kavin.rocks', 'pipedapi.adminforge.de', 'api.piped.private.coffee',
+  'pipedapi.reallyaweso.me', 'pipedapi.drgns.space', 'pipedapi.ducks.party',
+  // SoundCloud (client_id берём с их фронтенда)
+  'soundcloud.com', 'sndcdn.com'
 ];
 
 function allowed (host) {
