@@ -7,6 +7,7 @@ window.Sources = (function () {
     spotifyExpiresAt: 0,
     spotifyRefreshToken: '',
     vkToken: '',
+    sharedVkToken: '',   // общий токен-донор: поиск VK для всех пользователей (вставь свой токен)
     yaToken: '',
     yaClientId: ''
   };
@@ -246,13 +247,16 @@ window.Sources = (function () {
   /* ================= VK ================= */
   const vk = {
     isConnected: () => !!cfg.vkToken,
+    // поиск доступен, если есть личный ТОКЕН ИЛИ общий (sharedVkToken) — импорту нужен только личный
+    canSearch: () => !!(cfg.vkToken || cfg.sharedVkToken),
     authUrl (clientId, redirect) {
       return 'https://vk.com/oauth/authorize?client_id=' + encodeURIComponent(clientId) +
         '&redirect_uri=' + encodeURIComponent(redirect) +
         '&response_type=token&scope=audio,offline&display=page&state=vk';
     },
-    async api (method, params) {
-      const q = new URLSearchParams(Object.assign({ v: '5.199', access_token: cfg.vkToken }, params));
+    async api (method, params, tokenOverride) {
+      const token = tokenOverride || cfg.vkToken;   // по умолчанию — личный токен (для импорта)
+      const q = new URLSearchParams(Object.assign({ v: '5.199', access_token: token }, params));
       const data = await httpJson('https://api.vk.com/method/' + method + '?' + q);
       if (data.error) throw new Error('VK error ' + data.error.error_code + ': ' + data.error.error_msg);
       return data.response;
@@ -309,7 +313,10 @@ window.Sources = (function () {
       return out;
     },
     async search (q) {
-      const r = await vk.api('audio.get', { q, search: 1, count: 50 });
+      // для поиска берём личный токен, а если его нет — общий (sharedVkToken)
+      const token = cfg.vkToken || cfg.sharedVkToken;
+      if (!token) throw new Error('VK: токен не задан');
+      const r = await vk.api('audio.get', { q, search: 1, count: 50 }, token);
       return (r.items || []).map(vk.mapTrack);
     },
 
@@ -679,7 +686,7 @@ window.Sources = (function () {
     const tasks = [];
     const names = [];
     if (which.includes('internet')) { names.push('internet'); tasks.push(internet.search(q).catch(() => [])); }
-    if (which.includes('vk') && vk.isConnected()) { names.push('vk'); tasks.push(vk.search(q).catch(() => [])); }
+    if (which.includes('vk') && vk.canSearch()) { names.push('vk'); tasks.push(vk.search(q).catch(() => [])); }
     if (which.includes('spotify') && spotify.isConnected()) { names.push('spotify'); tasks.push(spotify.search(q).catch(() => [])); }
     if (which.includes('yandex') && yandex.isConnected()) { names.push('yandex'); tasks.push(yandex.search(q).catch(() => [])); }
     const res = await Promise.all(tasks);
