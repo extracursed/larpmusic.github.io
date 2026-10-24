@@ -580,8 +580,8 @@ function renderRecent () {
 function renderImportCards () {
   const cards = [
     { k: 'm3u', c: '#22c55e', icon: '#i-globe', t: 'M3U / прямые ссылки', s: 'Вставь ссылку или содержимое .m3u — треки заиграют сразу.', b: 'интернет' },
-    { k: 'files', c: '#a78bfa', icon: '#i-folder', t: 'Файлы с устройства', s: 'MP3, M4A, WAV, FLAC — локально, без загрузки в сеть.', b: 'локально' },
     { k: 'soundcloud', c: '#ff7700', icon: '#i-globe', t: 'SoundCloud', s: 'Ссылка на трек или плейлист — импорт без токена, треки полные.', b: 'без токена', always: true },
+    { k: 'files', c: '#a78bfa', icon: '#i-folder', t: 'Файлы с устройства', s: 'MP3, M4A, WAV, FLAC — локально, без загрузки в сеть.', b: 'локально' },
     { k: 'spotify', brand: true, icon: '#i-spotify', t: 'Spotify', s: 'Ссылка на плейлист или альбом — публичные импортируются без токена.', b: 'без токена', always: true },
     { k: 'vk', brand: true, icon: '#i-vk', t: 'VK Музыка', s: 'Ссылка на плейлист или профиль. Нужен токен VK (по-другому VK не отдаёт).', b: 'токен' },
     { k: 'yandex', brand: true, icon: '#i-yandex', t: 'Яндекс Музыка', s: 'Публичные плейлисты — без токена (нужен российский IP).', b: 'без токена', always: true }
@@ -1460,7 +1460,7 @@ function applyDesign (which) {
   localStorage.setItem('mma:design', which);
   const st = $('#stDesign');
   if (st) {
-    st.textContent = classic ? 'классический' : (prev ? 'прошлый' : 'новый');
+    st.textContent = classic ? 'классический' : (prev ? 'новый' : 'старый');
     st.classList.remove('ok');
   }
 }
@@ -1640,6 +1640,7 @@ function openFullPlayer () {
   $('#fullPlayer').setAttribute('aria-hidden', 'false');
   $('#fpBackdrop').classList.add('open');
   document.body.style.overflow = 'hidden';
+  $$('#fullPlayer input[type=range]').forEach(paintRange);   // белая заливка ползунков
   if (TG && TG.BackButton) { try { TG.BackButton.show(); } catch (e) {} }
 }
 function closeFullPlayer () {
@@ -1757,6 +1758,7 @@ async function init () {
   audio.volume = state.volume;
   bindSettings();
   bindDesignSwitch();
+  $$('input[type=range]').forEach(paintRange);   // ползунки с белой заливкой сразу
   renderUser();
   renderHome();
   renderImportCards();
