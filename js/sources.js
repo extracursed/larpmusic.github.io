@@ -1,7 +1,7 @@
 /* ============ LarpMusic — источники музыки ============ */
 window.Sources = (function () {
   const cfg = {
-    proxy: 'https://larpmusic-proxy.wawerave.workers.dev',
+    proxy: 'https://www.extravisualdlc.online/api/proxy',
     spotifyClientId: '',
     spotifyAccessToken: '',
     spotifyExpiresAt: 0,
@@ -206,12 +206,12 @@ window.Sources = (function () {
   const piped = {
     host: null,
     hosts: [
+      'https://api.piped.private.coffee',
+      'https://pipedapi.ducks.party',
       'https://pipedapi.kavin.rocks',
       'https://pipedapi.adminforge.de',
-      'https://api.piped.private.coffee',
       'https://pipedapi.reallyaweso.me',
-      'https://pipedapi.drgns.space',
-      'https://pipedapi.ducks.party'
+      'https://pipedapi.drgns.space'
     ],
     // запрос к инстансу: перебираем живые хосты, кэшируем рабочий
     async api (path) {
