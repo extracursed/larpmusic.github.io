@@ -579,8 +579,8 @@ function renderRecent () {
 }
 function renderImportCards () {
   const cards = [
-    { k: 'soundcloud', c: '#ff7700', icon: '#i-globe', t: 'SoundCloud', s: 'Ссылка на трек или плейлист — импорт без токена, треки полные.', b: 'без токена', always: true },
     { k: 'm3u', c: '#22c55e', icon: '#i-globe', t: 'M3U / прямые ссылки', s: 'Вставь ссылку или содержимое .m3u — треки заиграют сразу.', b: 'интернет' },
+    { k: 'soundcloud', c: '#ff7700', icon: '#i-globe', t: 'SoundCloud', s: 'Ссылка на трек или плейлист — импорт без токена, треки полные.', b: 'без токена', always: true },
     { k: 'files', c: '#a78bfa', icon: '#i-folder', t: 'Файлы с устройства', s: 'MP3, M4A, WAV, FLAC — локально, без загрузки в сеть.', b: 'локально' },
     { k: 'spotify', brand: true, icon: '#i-spotify', t: 'Spotify', s: 'Ссылка на плейлист или альбом — публичные импортируются без токена.', b: 'без токена', always: true },
     { k: 'vk', brand: true, icon: '#i-vk', t: 'VK Музыка', s: 'Ссылка на плейлист или профиль. Нужен токен VK (по-другому VK не отдаёт).', b: 'токен' },
