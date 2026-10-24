@@ -18,6 +18,18 @@ const APP_URL = 'https://extracursed.github.io/larpmusic.github.io/';
 
 const OPEN_BTN = [{ text: '🎵 Открыть ЛарпМузыку', web_app: { url: APP_URL } }];
 
+// Универсальный вызов Bot API
+async function tg (method, payload) {
+  try {
+    const r = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/' + method, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return await r.json();
+  } catch (e) { return { ok: false }; }
+}
+
 addEventListener('fetch', e => e.respondWith(handle(e.request)));
 
 async function handle (req) {
@@ -60,6 +72,24 @@ async function handle (req) {
   } else if (text.startsWith('/')) {
     out = { text: 'Пока я понимаю команды /start и /help. Напиши /start, чтобы открыть плеер.' };
   } else if (text) {
+    // Прислали прямую ссылку на аудио (пересылка трека из плеера)? Отправляем ФАЙЛОМ.
+    const urlMatch = text.match(/https?:\/\/\S+/);
+    if (urlMatch) {
+      const audioUrl = urlMatch[0];
+      const label = text.replace(/https?:\/\/\S+/g, '').replace(/^\s*Музыка:\s*/i, '').trim();
+      const m = label.split(/\s+[—–-]\s+/);
+      const title = (m[0] || '').trim() || 'Трек';
+      const artist = (m[1] || '').trim();
+      const res = await tg('sendAudio', {
+        chat_id: chat,
+        audio: audioUrl,
+        title: title,
+        performer: artist || undefined,
+        caption: 'Музыка: ' + title + (artist ? ' — ' + artist : '')
+      });
+      if (res && res.ok) return new Response('ok'); // файл ушёл — и хватит
+      // не вышло (ссылка не аудио) — отвечаем как обычно ниже
+    }
     out = {
       text: 'Слушаю тебя 🙂 А музыка — в кнопке ниже. Напиши /start, если нужно открыть плеер заново.',
       buttons: [OPEN_BTN]
@@ -67,14 +97,10 @@ async function handle (req) {
   }
 
   if (out) {
-    await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chat,
-        text: out.text,
-        reply_markup: out.buttons ? { inline_keyboard: out.buttons } : undefined
-      })
+    await tg('sendMessage', {
+      chat_id: chat,
+      text: out.text,
+      reply_markup: out.buttons ? { inline_keyboard: out.buttons } : undefined
     });
   }
   return new Response('ok');
