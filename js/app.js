@@ -80,9 +80,38 @@ async function shareAsFile (t) {
     const r = await fetch(u).catch(() => null);
     return (r && r.ok) ? await r.blob().catch(() => null) : null;
   };
+  /* HLS-трек (SoundCloud): склеиваем init + сегменты в один файл сами —
+     сегменты CDN отдаются с открытым CORS, бот не нужен */
+  const grabHls = async url => {
+    try {
+      const txt = await (await fetch(url)).text();
+      if (/#EXT-X-STREAM-INF/i.test(txt)) {         // мастер-плейлист — спускаемся ниже
+        const sub = txt.split(/\r?\n/).map(s => s.trim()).find(l => l && !l.startsWith('#'));
+        if (sub) return grabHls(new URL(sub, url).href);
+      }
+      const lines = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const mapUrl = (txt.match(/#EXT-X-MAP:URI="([^"]+)"/i) || [])[1];
+      const segs = lines.filter(l => !l.startsWith('#')).slice(0, 600);
+      if (!segs.length) return null;
+      const parts = [];
+      if (mapUrl) parts.push(new Uint8Array(await (await fetch(new URL(mapUrl, url).href)).arrayBuffer()));
+      for (const s of segs) {
+        parts.push(new Uint8Array(await (await fetch(new URL(s, url).href)).arrayBuffer()));
+        if (parts.reduce((a, p) => a + p.length, 0) > 24 * 1024 * 1024) break;
+      }
+      const total = parts.reduce((a, p) => a + p.length, 0);
+      if (total < 8000) return null;
+      const out = new Uint8Array(total);
+      let off = 0;
+      parts.forEach(p => { out.set(p, off); off += p.length; });
+      return new Blob([out], { type: 'audio/mp4' });
+    } catch (e) { return null; }
+  };
   let blob = null;
   if (t.source === 'local') blob = await idbGet(t.id);
-  else if (/^https?:\/\//i.test(t.url || '')) {
+  else if (/\.m3u8|mpegurl/i.test(t.url || '')) {
+    blob = await grabHls(t.url);                                    // HLS: склейка в один m4a
+  } else if (/^https?:\/\//i.test(t.url || '')) {
     blob = await grab(t.url);                                        // 1) напрямую (CDN с открытым CORS)
     if (!okAudio(blob)) blob = await grab(settings.proxy + '?url=' + encodeURIComponent(t.url)); // 2) через свой прокси
   }
@@ -270,6 +299,19 @@ let hls = null;
 function destroyHls () {
   if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
 }
+/* ссылки SoundCloud подписанные и протухают (~сутки): при ошибке потока
+   перевыпрашиваем свежую по id трека и играем ещё раз — один раз на трек */
+async function retryWithFreshUrl (reason) {
+  const t = currentTrack();
+  if (!t || !t.scId || t._retried === reason + '1') return false;
+  t._retried = reason + '1';
+  const fresh = await Sources.soundcloud.refresh(t);
+  if (!fresh || !fresh.url || fresh.url === t.url) return false;
+  regTracks([fresh]);   // обновляем в реестре
+  loadAudio(fresh);
+  audio.play().catch(() => {});
+  return true;
+}
 function loadAudio (t) {
   const needHls = !!(t && t.hls && /\.m3u8|mpegurl/i.test(t.url));
   destroyHls();
@@ -279,11 +321,11 @@ function loadAudio (t) {
     hls = new Hls({ enableWorker: true });
     hls.attachMedia(audio);
     hls.loadSource(t.url);
-    hls.on(Hls.Events.ERROR, (ev, data) => {
+    hls.on(Hls.Events.ERROR, async (ev, data) => {
       if (data && data.fatal) {
         destroyHls();
-        toast('Поток недоступен — пропускаю', true);
-        nextTrack(true);
+        const ok = await retryWithFreshUrl('hls');
+        if (!ok) { toast('Поток недоступен — пропускаю', true); nextTrack(true); }
       }
     });
   } else {
@@ -400,8 +442,10 @@ audio.addEventListener('pause', () => {
   updatePlayButtons();
 });
 audio.addEventListener('ended', () => nextTrack(true));
-audio.addEventListener('error', () => {
-  if (audio.src) toast('Файл недоступен — пропускаю', true);
+audio.addEventListener('error', async () => {
+  if (!audio.src && !hls) return;
+  const ok = await retryWithFreshUrl('audio');
+  if (!ok && (audio.src || hls)) toast('Файл недоступен — пропускаю', true);
 });
 audio.addEventListener('timeupdate', () => {
   const d = audio.duration || 0, c = audio.currentTime || 0;
@@ -535,11 +579,12 @@ function renderRecent () {
 }
 function renderImportCards () {
   const cards = [
+    { k: 'soundcloud', c: '#ff7700', icon: '#i-globe', t: 'SoundCloud', s: 'Ссылка на трек или плейлист — импорт без токена, треки полные.', b: 'без токена', always: true },
     { k: 'm3u', c: '#22c55e', icon: '#i-globe', t: 'M3U / прямые ссылки', s: 'Вставь ссылку или содержимое .m3u — треки заиграют сразу.', b: 'интернет' },
     { k: 'files', c: '#a78bfa', icon: '#i-folder', t: 'Файлы с устройства', s: 'MP3, M4A, WAV, FLAC — локально, без загрузки в сеть.', b: 'локально' },
-    { k: 'spotify', brand: true, icon: '#i-spotify', t: 'Spotify', s: 'Вставь ссылку на плейлист или альбом — треки будут найдены.', b: 'Spotify' },
-    { k: 'vk', brand: true, icon: '#i-vk', t: 'VK Музыка', s: 'Ссылка на плейлист или профиль — музыка найдётся сама.', b: 'VK' },
-    { k: 'yandex', brand: true, icon: '#i-yandex', t: 'Яндекс Музыка', s: 'Ссылка на плейлист, альбом или профиль Яндекс Музыки.', b: 'Яндекс' }
+    { k: 'spotify', brand: true, icon: '#i-spotify', t: 'Spotify', s: 'Ссылка на плейлист или альбом — публичные импортируются без токена.', b: 'без токена', always: true },
+    { k: 'vk', brand: true, icon: '#i-vk', t: 'VK Музыка', s: 'Ссылка на плейлист или профиль. Нужен токен VK (по-другому VK не отдаёт).', b: 'токен' },
+    { k: 'yandex', brand: true, icon: '#i-yandex', t: 'Яндекс Музыка', s: 'Публичные плейлисты — без токена (нужен российский IP).', b: 'без токена', always: true }
   ];
   const ok = {
     spotify: Sources.spotify.isConnected(),
@@ -550,11 +595,12 @@ function renderImportCards () {
     const logo = c.brand
       ? '<div class="imp-logo brand"><svg class="ic"><use href="' + c.icon + '"/></svg></div>'
       : '<div class="imp-logo" style="background:' + c.c + '"><svg class="ic"><use href="' + c.icon + '"/></svg></div>';
+    const badge = c.always
+      ? '<span class="imp-badge ok">' + c.b + '</span>'
+      : '<span class="imp-badge' + (ok[c.k] ? ' ok' : '') + '">' + (ok[c.k] ? 'подключено' : c.b) + '</span>';
     return '<button class="imp-card" data-imp="' + c.k + '">' + logo +
       '<div class="imp-body">' +
-        '<div class="imp-title">' + c.t +
-          '<span class="imp-badge' + (ok[c.k] ? ' ok' : '') + '">' + (ok[c.k] ? 'подключено' : c.b) + '</span>' +
-        '</div>' +
+        '<div class="imp-title">' + c.t + badge + '</div>' +
         '<div class="imp-sub">' + c.s + '</div>' +
       '</div>' +
       '<svg class="ic" style="color:var(--muted)"><use href="#i-link"/></svg>' +
@@ -918,6 +964,7 @@ document.addEventListener('click', e => {
 function openImport (kind) {
   if (kind === 'files') return openFilesImport();
   if (kind === 'm3u') return openM3uImport();
+  if (kind === 'soundcloud') return openSoundcloudImport();
   if (kind === 'spotify') return openSpotifyImport();
   if (kind === 'vk') return openVkImport();
   if (kind === 'yandex') return openYandexImport();
@@ -1129,6 +1176,36 @@ function openLinkImportModal (o) {
   if (o.bindExtra) o.bindExtra();
 }
 
+/* --- SoundCloud --- */
+function openSoundcloudImport () {
+  openLinkImportModal({
+    title: 'SoundCloud', tag: 't-spotify', connected: true,
+    lastLink: settings.scLastLink || '',
+    placeholder: 'https://soundcloud.com/user/sets/playlist',
+    onFind: scFindByLink,
+    connectSummary: '',   // подключение не нужно — работает без токена
+    connectHtml: ''
+  });
+}
+async function scFindByLink () {
+  const link = $('#impLink').value.trim();
+  if (!link) return toast('Вставь ссылку SoundCloud', true);
+  const p = Sources.soundcloud.parseLink(link);
+  if (!p) {
+    impStatus('Примеры: <b>https://soundcloud.com/user/sets/playlist</b> (плейлист), ' +
+              '<b>https://soundcloud.com/user/track</b> (трек)', true);
+    return;
+  }
+  settings.scLastLink = link; store.set('settings', settings);
+  impBusy(true, 'Загружаю треки из SoundCloud…');
+  try {
+    const res = await Sources.soundcloud.findByLink(p);
+    impBusy(false);
+    if (!res.tracks.length) throw new Error('По ссылке ничего не найдено');
+    showImportConfirm(res);
+  } catch (e) { impBusy(false); impStatus(esc(e.message), true); }
+}
+
 /* --- Spotify --- */
 function openSpotifyImport () {
   const connected = Sources.spotify.isConnected();
@@ -1187,12 +1264,15 @@ async function spFindByLink () {
   settings.spLastLink = link; store.set('settings', settings);
   impBusy(true, 'Ищу музыку по ссылке…');
   try {
-    if (!Sources.spotify.isConnected()) throw new Error('Spotify скрывает плейлисты без доступа — раскрой раздел ниже');
-    const res = await Sources.spotify.findByLink(p);
+    const res = await Sources.spotify.findByLink(p);   // публичные — без токена (embed)
     impBusy(false);
     if (!res.tracks.length) throw new Error('По ссылке ничего не найдено');
     showImportConfirm(res);
-  } catch (e) { impBusy(false); impStatus(esc(e.message), true); }
+  } catch (e) {
+    impBusy(false);
+    impStatus(esc(e.message) + (Sources.spotify.isConnected() ? '' :
+      '<br>Публичные плейлисты работают без токена; если не нашлось — подключи доступ ниже.'), true);
+  }
 }
 async function spLoadMine () {
   impBusy(true, 'Загружаю мои плейлисты…');
@@ -1355,8 +1435,7 @@ async function yaFindByLink () {
   settings.ymLastLink = link; store.set('settings', settings);
   impBusy(true, 'Ищу музыку по ссылке…');
   try {
-    if (!Sources.yandex.isConnected()) throw new Error('Яндекс требует OAuth — раскрой раздел ниже');
-    const res = await Sources.yandex.findByLink(p);
+    const res = await Sources.yandex.findByLink(p);    // публичные плейлисты — без токена
     impBusy(false);
     if (res.albums) {
       if (!res.albums.length) throw new Error('У пользователя нет открытых плейлистов');
@@ -1368,6 +1447,82 @@ async function yaFindByLink () {
 }
 
 /* ============ НАСТРОЙКИ ============ */
+/* --- переключатель дизайна: новый / классический (бэкап старого) --- */
+function applyDesign (which) {
+  const classic = which === 'classic';
+  const c = $('#cssClassic'), m = $('#cssMain');
+  if (c && m) { c.disabled = !classic; m.disabled = classic; }
+  localStorage.setItem('mma:design', classic ? 'classic' : 'new');
+  const st = $('#stDesign');
+  if (st) { st.textContent = classic ? 'классический' : 'новый'; st.classList.toggle('ok', !classic); }
+}
+function bindDesignSwitch () {
+  if (!$('#btnDesignNew')) return;
+  applyDesign(localStorage.getItem('mma:design') === 'classic' ? 'classic' : 'new');
+  $('#btnDesignNew').addEventListener('click', () => { applyDesign('new'); haptic('impact'); });
+  $('#btnDesignClassic').addEventListener('click', () => { applyDesign('classic'); haptic('impact'); });
+}
+
+/* --- перенос музыки между устройствами: экспорт/импорт кода --- */
+function exportMusicCode () {
+  const pls = state.playlists.filter(p => p.trackIds.length);
+  if (!pls.length) return toast('Нет плейлистов для переноса', true);
+  const data = { v: 1, playlists: pls.map(p => ({ name: p.name, tracks: p.trackIds.map(id => reg(id)).filter(Boolean) })) };
+  const json = JSON.stringify(data);
+  // компактное кодирование без localStorage-зависимых полей
+  const packed = 'LARP1:' + btoa(unescape(encodeURIComponent(json))).replace(/=+$/, '');
+  openModal(
+    '<h3>Код для переноса</h3>' +
+    '<p class="sub">Скопируй код и отправь его себе (например, в Telegram «Избранное»). На другом устройстве: Настройки → Перенос музыки → Импорт.</p>' +
+    '<textarea class="mono" id="expCode" readonly style="min-height:120px">' + esc(packed) + '</textarea>' +
+    '<div class="modal-actions">' +
+      '<button class="btn primary wide" id="expCopy">Скопировать код</button>' +
+    '</div>');
+  $('#expCopy').addEventListener('click', () => {
+    const ta = $('#expCode');
+    ta.select();
+    const done = () => { toast('Код скопирован ✓'); haptic('success'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(done).catch(() => { document.execCommand('copy'); done(); });
+    } else { document.execCommand('copy'); done(); }
+  });
+}
+function importMusicCode () {
+  openModal(
+    '<h3>Импорт музыки</h3>' +
+    '<p class="sub">Вставь код переноса, полученный на другом устройстве.</p>' +
+    '<textarea class="mono" id="impCode" placeholder="LARP1:..." style="min-height:120px"></textarea>' +
+    '<div class="modal-actions">' +
+      '<button class="btn primary wide" id="impCodeGo">Импортировать</button>' +
+    '</div>');
+  $('#impCodeGo').addEventListener('click', () => {
+    const raw = $('#impCode').value.trim();
+    if (!raw.startsWith('LARP1:')) return toast('Это не код переноса', true);
+    let data;
+    try {
+      const b64 = raw.slice(6);
+      data = JSON.parse(decodeURIComponent(escape(atob(b64 + '='.repeat((4 - b64.length % 4) % 4)))));
+    } catch (e) { return toast('Код повреждён', true); }
+    if (!data || !Array.isArray(data.playlists)) return toast('Код повреждён', true);
+    let added = 0, trs = 0;
+    data.playlists.forEach(p => {
+      const tracks = (p.tracks || []).filter(t => t && t.title);
+      if (!tracks.length) return;
+      regTracks(tracks);
+      let pl = state.playlists.find(x => x.name === p.name && x.name !== 'Мне нравится');
+      if (!pl) { createPlaylist(p.name, tracks[0].cover || ''); pl = state.playlists.find(x => x.name === p.name); }
+      tracks.forEach(t => { if (!pl.trackIds.includes(t.id)) { pl.trackIds.push(t.id); trs++; } });
+      added++;
+    });
+    store.set('playlists', state.playlists);
+    renderHome();
+    closeModal();
+    toast('Перенесено плейлистов: ' + added + ', треков: ' + trs + ' ✓');
+    haptic('success');
+    goto('library');
+  });
+}
+
 function bindSettings () {
   $('#setSpotifyId').value = settings.spotifyClientId;
   $('#setSpotifyToken').value = settings.spotifyToken;
@@ -1428,6 +1583,8 @@ function bindSettings () {
     Object.keys(localStorage).filter(k => k.startsWith('mma')).forEach(k => localStorage.removeItem(k));
     location.reload();
   });
+  if ($('#btnExportMusic')) $('#btnExportMusic').addEventListener('click', exportMusicCode);
+  if ($('#btnImportMusic')) $('#btnImportMusic').addEventListener('click', importMusicCode);
 }
 
 /* ============ ПЛЕЕР — события ============ */
@@ -1581,6 +1738,7 @@ async function init () {
   setVolume(settings.volume / 100);
   audio.volume = state.volume;
   bindSettings();
+  bindDesignSwitch();
   renderUser();
   renderHome();
   renderImportCards();

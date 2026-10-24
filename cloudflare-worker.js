@@ -1,29 +1,33 @@
-/* ============ LarpMusic (ЛарпМузыка) — CORS-прокси для Cloudflare Workers ============ */
+/* ============ LarpMusic (ЛарпМузыка) — CORS-прокси v2 для Cloudflare Workers ============ */
 /* Зачем: GitHub Pages — статический хостинг, серверного /proxy там нет, а API
-   VK и Яндекса блокируют запросы прямо из браузера (CORS). Этот Worker —
-   замена server.js в облаке, бесплатный план хватает с запасом.
+   VK, Яндекса и Spotify блокируют запросы прямо из браузера (CORS). Этот
+   Worker — замена server.js в облаке, бесплатный план хватает с запасом.
 
-   Как задеплоить (2 минуты, без карты):
-   1. cloudflare.com → Workers & Pages → Create Worker
+   v2: добавлены open.spotify.com (анонимный импорт публичных плейлистов через
+   embed-страницу), региональные домены Яндекса, CDN превью Spotify (scdn.co)
+   и zvuk.com. Приложение использует этот воркер как ЗАПАСНОЙ прокси: сначала
+   основной, при отказе хоста (403/451/502) — этот.
+
+   Как обновить задеплоенный воркер (например, larpmusic-proxy):
+   1. cloudflare.com → Workers & Pages → выбери воркер → Edit code
    2. Вставь весь этот файл → Deploy
-   3. Скопируй URL вида https://music-proxy.ИМЯ.workers.dev
-   4. В приложении: Ещё → «API-прокси (CORS)» → вставь URL → сохранить
-   5. В URL прокси приложение автоматически добавит ?url=...
+   Больше ничего не нужно — URL в приложении уже вшит как запасной.
 
-   Прокси пропускает только белый список хостов — это не open-proxy.      */
+   Прокси пропускает только белый список хостов — это не open-proxy. */
 
 const ALLOW = [
-  'api.vk.com',
-  'music.yandex.net', 'login.yandex.ru',
+  'api.vk.com', 'vk.com',
+  'music.yandex.net', 'api.music.yandex.net', 'api.music.yandex.com', 'api.music.yandex.kz',
+  'music.yandex.ru', 'music.yandex.com', 'login.yandex.ru',
   'api.audius.co', 'discoveryprovider.audius.co',
   'discoveryprovider2.audius.co', 'discoveryprovider3.audius.co', 'discoveryprovider4.audius.co',
-  'api.spotify.com', 'accounts.spotify.com',
+  'api.spotify.com', 'accounts.spotify.com', 'open.spotify.com',
+  'scdn.co', 'p.scdn.co', 'i.scdn.co',
   'archive.org',
-  // YouTube через публичные инстансы Piped (полные треки — как у GB Music/Dotify)
-  'pipedapi.kavin.rocks', 'pipedapi.adminforge.de', 'api.piped.private.coffee',
-  'pipedapi.reallyaweso.me', 'pipedapi.drgns.space', 'pipedapi.ducks.party',
-  // SoundCloud (client_id берём с их фронтенда)
-  'soundcloud.com', 'sndcdn.com'
+  // SoundCloud (client_id берём с их фронтенда; звук идёт напрямую с CDN)
+  'soundcloud.com', 'sndcdn.com',
+  // zvuk.com (превью без подписки; полный каталог — только с подпиской)
+  'zvuk.com', 'cdn66.zvuk.com', 'cdn-image.zvuk.com'
 ];
 
 function allowed (host) {
@@ -59,7 +63,10 @@ async function handle (req) {
   const init = { method: req.method === 'POST' ? 'POST' : 'GET', redirect: 'follow' };
   if (req.method === 'POST') {
     init.body = await req.text();
-    init.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+    init.headers = {
+      'Content-Type': req.headers.get('Content-Type') || 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'
+    };
   }
 
   const r = await fetch(t.href, init);

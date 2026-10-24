@@ -2,6 +2,10 @@
 window.Sources = (function () {
   const cfg = {
     proxy: 'https://www.extravisualdlc.online/api/proxy',
+    // запасной прокси (Cloudflare Worker): основной белый список уже не изменить
+    // (репо удалён), а CF-воркер владелец может обновить — туда уходят хосты
+    // вне списка основного (open.spotify.com, региональные домены Яндекса)
+    proxy2: 'https://larpmusic-proxy.wawerave.workers.dev',
     spotifyClientId: '',
     spotifyAccessToken: '',
     spotifyExpiresAt: 0,
@@ -16,10 +20,16 @@ window.Sources = (function () {
   function getCfg () { return cfg; }
 
   /* ---------- HTTP: прямой запрос -> fallback на прокси ---------- */
-  function proxied (url) {
-    const p = cfg.proxy || '';
+  function proxied (url, which) {
+    const p = (which === 2 ? cfg.proxy2 : cfg.proxy) || '';
     if (!p) return null;
     return p + (p.includes('?') ? '&' : '?') + 'url=' + encodeURIComponent(url);
+  }
+  // запрос через конкретный прокси (для смены канала, если основной отклонил хост)
+  function viaProxy (url, opts, which) {
+    const p = proxied(url, which);
+    if (!p) return Promise.reject(new Error('Прокси не настроен'));
+    return fetchTo(p, opts, REQ_TIMEOUT);
   }
 
   const REQ_TIMEOUT = 8000;
@@ -39,21 +49,27 @@ window.Sources = (function () {
       err.status = r.status;
       throw err;
     } catch (e) {
-      const p = proxied(url);
-      if (!p) throw e;
-      const r = await fetchTo(p, opts, REQ_TIMEOUT);
-      if (!r.ok) {
+      // канал 1: основной прокси
+      try {
+        const r = await viaProxy(url, opts, 1);
+        if (r.ok) return r;
+        // хост вне белого списка / гео-блок / прокси споткнулся — пробуем запасной
+        if ([403, 451, 502].includes(r.status) && cfg.proxy2 && cfg.proxy2 !== cfg.proxy) {
+          const r2 = await viaProxy(url, opts, 2);
+          if (r2.ok) return r2;
+        }
         const txt = await r.text().catch(() => '');
         let msg = 'Прокси: ' + r.status + (txt ? ' ' + txt.slice(0, 160) : '');
-        if (r.status === 404 && /^\/(proxy|\?)/.test(cfg.proxy || '')) {
-          msg += ' — приложение опубликовано без сервера (GitHub Pages?). ' +
-                 'Задеплой cloudflare-worker.js и вставь его URL в настройках («API-прокси»).';
+        if (r.status === 403 && /вне белого списка/i.test(txt) && /spotify|yandex/i.test(url)) {
+          msg += ' — host ещё не добавлен в прокси. Обнови cloudflare-worker.js в Cloudflare.';
         }
-        const err = new Error(msg);
-        err.status = r.status;
-        throw err;
+        const err2 = new Error(msg);
+        err2.status = r.status;
+        throw err2;
+      } catch (e2) {
+        if (e2 && e2.status) throw e2;
+        throw e2 instanceof Error ? e2 : e;
       }
-      return r;
     }
   }
   const httpGet = (url, headers) => http(url, headers ? { headers } : {});
@@ -261,6 +277,7 @@ window.Sources = (function () {
           if (!s || !s.url) return null;
           return {
             id: 'sc:' + t.id,
+            scId: t.id,                    // для перевыпроса протухшей ссылки при воспроизведении
             title: String(t.title || '').replace(/\s+/g, ' ').trim() || 'Трек',
             artist: (t.user && t.user.username) || 'SoundCloud',
             album: '',
@@ -274,6 +291,80 @@ window.Sources = (function () {
         } catch (e) { return null; }
       }));
       return out.filter(Boolean);
+    },
+
+    /* перевыпрос потока по id трека: подписанные ссылки SoundCloud протухают ~за сутки */
+    async refresh (t) {
+      if (!t || !t.scId) return null;
+      try {
+        const d = await soundcloud.api('/tracks/' + t.scId);
+        if (!d) return null;
+        const s = await soundcloud.streamUrl(d);
+        if (!s || !s.url) return null;
+        return Object.assign({}, t, { url: s.url, hls: s.hls });
+      } catch (e) { return null; }
+    },
+
+    /* импорт по ссылке: трек или плейлист (без токенов) */
+    parseLink (raw) {
+      let u;
+      try { u = new URL(/^https?:/i.test(raw) ? raw : 'https://' + raw); } catch (e) { return null; }
+      if (!/(^|\.)soundcloud\.com$/i.test(u.hostname)) return null;
+      const m = u.pathname.match(/^\/([^/]+)\/(sets|tracks)\/([^/]+)/);
+      if (m) return { user: m[1], kind: m[2] === 'sets' ? 'playlist' : 'track', slug: m[3] };
+      const t = u.pathname.match(/^\/([^/]+)\/([^/]+)$/);
+      if (t) return { user: t[1], kind: 'track', slug: t[2] };
+      return null;
+    },
+    async findByLink (p) {
+      const url = 'https://soundcloud.com/' + p.user + '/' +
+                  (p.kind === 'playlist' ? 'sets/' : '') + p.slug;
+      const d = await soundcloud.api('/resolve?url=' + encodeURIComponent(url));
+      if (!d) throw new Error('SoundCloud не ответил');
+      if (d.kind === 'playlist') {
+        const raw = d.tracks || [];
+        const out = await Promise.all(raw.slice(0, 100).map(async t => {
+          try {
+            const full = (t.full_duration || t.duration || 0) / 1000;
+            if (full < 30) return null;
+            const s = await soundcloud.streamUrl(t);
+            if (!s || !s.url) return null;
+            return {
+              id: 'sc:' + t.id, scId: t.id,
+              title: String(t.title || 'Трек').replace(/\s+/g, ' ').trim(),
+              artist: (t.user && t.user.username) || 'SoundCloud',
+              album: d.title || '',
+              cover: (t.artwork_url || '').replace('-large', '-t300x300'),
+              url: s.url, hls: s.hls, source: 'Интернет',
+              duration: Math.round(full),
+              openUrl: t.permalink_url || ''
+            };
+          } catch (e) { return null; }
+        }));
+        const tracks = out.filter(Boolean);
+        if (!tracks.length) throw new Error('В плейлисте нет воспроизводимых треков');
+        return { name: d.title || 'Плейлист SoundCloud',
+                 cover: (d.artwork_url || '').replace('-large', '-t300x300'),
+                 tracks };
+      }
+      if (d.kind === 'track') {
+        const s = await soundcloud.streamUrl(d);
+        if (!s || !s.url) throw new Error('Трек недоступен для воспроизведения');
+        return {
+          name: d.title || 'Трек SoundCloud',
+          cover: (d.artwork_url || '').replace('-large', '-t300x300'),
+          tracks: [{
+            id: 'sc:' + d.id, scId: d.id,
+            title: String(d.title || 'Трек').replace(/\s+/g, ' ').trim(),
+            artist: (d.user && d.user.username) || 'SoundCloud',
+            album: '', cover: (d.artwork_url || '').replace('-large', '-t300x300'),
+            url: s.url, hls: s.hls, source: 'Интернет',
+            duration: Math.round((d.full_duration || d.duration || 0) / 1000),
+            openUrl: d.permalink_url || ''
+          }]
+        };
+      }
+      throw new Error('Это не трек и не плейлист SoundCloud');
     }
   };
 
@@ -562,6 +653,36 @@ window.Sources = (function () {
       if (!m) return null;
       return { type: m[1], id: m[2] };
     },
+    /* анонимный путь: embed-страница Spotify содержит те же данные без токена
+       (публичные плейлисты/альбомы/треки; у трека есть 30-сек превью, если выдано) */
+    async embed (type, id) {
+      const html = await (await httpGet('https://open.spotify.com/embed/' + type + '/' + id)).text();
+      const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+      if (!m) throw new Error('Spotify: embed не отдал данные');
+      const d = JSON.parse(m[1]);
+      const entity = (((d.props || {}).pageProps || {}).state || {}).data || {};
+      const ent = entity.entity || {};
+      if (!ent || !ent.title) throw new Error('Spotify: плейлист недоступен (приватный?)');
+      const img = src => (src && src.sources && src.sources.length) ? src.sources[src.sources.length - 1].url : '';
+      const tl = ent.trackList || [];
+      return {
+        name: ent.title || 'Spotify',
+        cover: img(ent.coverArt) || '',
+        tracks: tl.filter(x => x.title).map(x => ({
+          id: 'spx:' + (x.uid || x.title),
+          title: x.title,
+          artist: x.subtitle || '',
+          album: '',
+          cover: img(x.coverArt) || img(ent.coverArt) || '',
+          url: ((x.audioPreview || {}).url) || '',
+          source: 'spotify',
+          duration: Math.round((x.duration || 0) / 1000),
+          openUrl: (x.shareUrl || '') + '',
+          // для полного трека попробуем найти звук на SoundCloud при первом воспроизведении
+          lookup: x.title + ' ' + (x.subtitle || '')
+        }))
+      };
+    },
     async playlistTracksById (id) {
       const out = [];
       let next = '/playlists/' + id + '/tracks?limit=100';
@@ -574,6 +695,11 @@ window.Sources = (function () {
       return out.filter(t => t.title);
     },
     async findByLink (p) {
+      // 1) без токена — публичные данные из embed-страницы (работает для всех)
+      if (['playlist', 'album', 'track'].includes(p.type)) {
+        try { return await spotify.embed(p.type, p.id); } catch (e) { /* попробуем API */ }
+      }
+      // 2) с токеном — если подключён (приватные плейлисты и полные метаданные)
       if (p.type === 'playlist') {
         const meta = await spotify.api('/playlists/' + p.id);
         return { name: meta.name || 'Плейлист Spotify',
@@ -601,11 +727,24 @@ window.Sources = (function () {
       return 'https://yandex.ru/oauth/authorize?response_type=token&client_id=' +
         encodeURIComponent(clientId) + '&redirect_uri=' + encodeURIComponent(redirect);
     },
-    H () { return { Authorization: 'OAuth ' + cfg.yaToken, 'X-Yandex-Music-Client': 'Yandex-Music-API' }; },
+    H () {
+      const h = { 'X-Yandex-Music-Client': 'YandexMusicAndroid/24023600' };
+      if (cfg.yaToken) h.Authorization = 'OAuth ' + cfg.yaToken;
+      return h;
+    },
+    // публичные плейлисты/треки Яндекс отдаёт и без токена — но только с российских IP
     async api (path) {
-      if (!cfg.yaToken) throw new Error('Яндекс не подключён');
-      const d = await httpJson('https://music.yandex.net' + path, yandex.H());
-      if (d.error) throw new Error('Яндекс: ' + (d.error.message || d.error));
+      let d;
+      try {
+        d = await httpJson('https://music.yandex.net' + path, yandex.H());
+      } catch (e) {
+        if (e && (e.status === 451 || /451|Unavailable/.test(String(e.message)))) {
+          throw new Error('Яндекс отдаёт музыку только с российских IP — прокси за границей. ' +
+                          'Вставь свой токен Яндекса в настройках или обнови cloudflare-worker.js');
+        }
+        throw e;
+      }
+      if (d.error) throw new Error('Яндекс: ' + (d.error.message || d.error.name || d.error));
       return d;
     },
     async uid () {
@@ -792,5 +931,7 @@ window.Sources = (function () {
     return Array.from(byKey.values());
   }
 
-  return { configure, getCfg, httpGet, httpPost, uid, internet, vk, spotify, yandex, m3u, searchAll };
+  return { configure, getCfg, httpGet, httpPost, uid, internet, vk, spotify, yandex, m3u, searchAll,
+           soundcloud: { parseLink: soundcloud.parseLink, findByLink: soundcloud.findByLink,
+                         refresh: soundcloud.refresh, search: soundcloud.search } };
 })();

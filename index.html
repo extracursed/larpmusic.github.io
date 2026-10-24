@@ -6,7 +6,8 @@
 <meta name="theme-color" content="#0b0b0c">
 <title>LarpMusic — ЛарпМузыка</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style-classic.css" id="cssClassic" disabled>
+<link rel="stylesheet" href="css/style.css" id="cssMain">
 </head>
 <body>
 
@@ -241,6 +242,25 @@
         <div class="field-card">
           <div class="field-row"><label for="setVolume">Громкость по умолчанию</label><span id="setVolumeVal">80%</span></div>
           <input id="setVolume" type="range" min="0" max="100" value="80">
+        </div>
+
+        <div class="section-head"><h3>Оформление</h3></div>
+        <div class="field-card">
+          <div class="field-row"><label>Дизайн</label><span class="tag" id="stDesign">новый</span></div>
+          <div class="field-row">
+            <button class="btn ghost" id="btnDesignNew" style="flex:1">Новый</button>
+            <button class="btn ghost" id="btnDesignClassic" style="flex:1">Классический</button>
+          </div>
+          <p class="note">«Классический» — прежний вид приложения (резервная копия старого дизайна).</p>
+        </div>
+
+        <div class="section-head"><h3>Перенос музыки</h3></div>
+        <div class="field-card">
+          <p class="note" style="margin:0 0 10px">Перенеси импортированные плейлисты на другое устройство: сгенерируй код здесь и вставь его в приложении на телефоне (или наоборот).</p>
+          <div class="field-row">
+            <button class="btn primary" id="btnExportMusic" style="flex:1">Экспорт — код</button>
+            <button class="btn ghost" id="btnImportMusic" style="flex:1">Импорт — вставить код</button>
+          </div>
         </div>
 
         <div class="section-head"><h3>Данные</h3></div>
